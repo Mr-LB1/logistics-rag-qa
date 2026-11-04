@@ -153,13 +153,51 @@ def search_bm25(query: str, k: int = 4) -> list[dict]:
     ]
 
 
-def search(query: str, k: int = 4, method: str = "bm25") -> list[dict]:
-    """检索入口: method = bm25 | vector.
+def search_hybrid(query: str, k: int = 4, alpha: float = 0.5) -> list[dict]:
+    """混合检索: BM25 与向量分数归一化后加权融合.
 
-    vector 需要智谱账户有余额(embedding-3 为付费模型), 充值后即可切换对比.
+    alpha = 向量权重 (1-alpha 为 BM25 权重); alpha=0.5 即等权.
+    归一化: 各自结果集内 min-max -> [0,1], 消除量纲差异后再融合.
+    """
+    pool = max(k * 3, 8)  # 候选池取大一些再融合
+    bm = search_bm25(query, k=pool)
+    ve = search(query, k=pool, method="vector")
+
+    def _norm(items: list[dict]) -> None:
+        if not items:
+            return
+        lo = min(x["score"] for x in items)
+        hi = max(x["score"] for x in items)
+        rng = (hi - lo) or 1.0
+        for x in items:
+            x["norm"] = (x["score"] - lo) / rng
+
+    _norm(bm)
+    _norm(ve)
+
+    fused: dict[int, dict] = {}
+    # 以文本作为唯一键融合两种检索的结果
+    for items, weight in ((bm, 1 - alpha), (ve, alpha)):
+        for rank, x in enumerate(items):
+            key = x["text"]
+            if key not in fused:
+                fused[key] = {**x, "score": 0.0}
+            # 融合分 = 各路归一化分加权和, 附带轻微排名惩罚(越靠前越好)
+            fused[key]["score"] += weight * x["norm"] * (1 - rank / (pool * 2))
+
+    top = sorted(fused.values(), key=lambda x: x["score"], reverse=True)[:k]
+    return [{**x, "score": round(x["score"], 4), "method": "hybrid"} for x in top]
+
+
+def search(query: str, k: int = 4, method: str = "bm25") -> list[dict]:
+    """检索入口: method = bm25 | vector | hybrid.
+
+    vector/hybrid 需要 embedding (智谱账户有余额).
     """
     if method == "bm25":
         return search_bm25(query, k)
+    if method == "hybrid":
+        return search_hybrid(query, k)
 
     import numpy as np
 
@@ -174,7 +212,3 @@ def search(query: str, k: int = 4, method: str = "bm25") -> list[dict]:
         {**index["chunks"][int(i)], "score": round(float(sims[i]), 4), "method": "vector"}
         for i in top_idx
     ]
-
-
-if __name__ == "__main__":
-    build_index()

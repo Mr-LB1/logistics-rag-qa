@@ -21,8 +21,8 @@ SYSTEM_PROMPT = """你是物流公司的制度问答助手。严格依据给定�
 - 回答简洁, 分点陈述"""
 
 
-def ask(question: str, k: int = 4) -> str:
-    print(f"\n问题: {question}")
+def ask(question: str, k: int = 4, method: str = "hybrid") -> str:
+    print(f"\n问题: {question} (检索: {method})")
     hits = search(question, k=k)
     print("检索到的片段:")
     for h in hits:
@@ -50,4 +50,10 @@ def ask(question: str, k: int = 4) -> str:
 
 
 if __name__ == "__main__":
-    ask(" ".join(sys.argv[1:]) or "冷链一级告警的处理时限是什么?")
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("question", nargs="+")
+    parser.add_argument("--method", default="hybrid", choices=["bm25", "vector", "hybrid"])
+    args = parser.parse_args()
+    ask(" ".join(args.question), method=args.method)
